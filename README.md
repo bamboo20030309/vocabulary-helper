@@ -1,4 +1,4 @@
-# N3 Discord Vocabulary Bot
+# Vocabulary Helper
 
 本機跑的 JLPT N3 單字複習 Discord bot。它會把單字分成：
 

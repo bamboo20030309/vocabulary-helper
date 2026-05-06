@@ -1,5 +1,5 @@
 [project]
-name = "n3-discord-vocab"
+name = "vocabulary-helper"
 version = "0.1.0"
 description = "A local Discord bot for JLPT N3 vocabulary quizzes with adaptive review labels."
 requires-python = ">=3.11"
