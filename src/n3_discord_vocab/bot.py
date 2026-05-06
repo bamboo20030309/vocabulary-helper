@@ -108,7 +108,12 @@ class VocabBot(commands.Bot):
         self.store = VocabularyStore(settings.database_path)
         self.store.seed_defaults()
         self.quiz_engine = QuizEngine(self.store)
-        self.llm = OllamaClient(settings.ollama_url, settings.ollama_model, settings.llm_enabled)
+        self.llm = OllamaClient(
+            settings.ollama_url,
+            settings.ollama_model,
+            settings.llm_enabled,
+            settings.ollama_timeout,
+        )
         self.dictionary = DictionaryClient(settings.dictionary_enabled)
         self.last_daily_quiz_date: str | None = None
 

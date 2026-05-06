@@ -33,7 +33,8 @@ Copy-Item .env.example .env
 - `DISCORD_CHANNEL_ID`：每日題目要發送的 channel id；留空時會私訊 `DISCORD_USER_ID`
 - `DISCORD_GUILD_ID`：測試用伺服器 id；填了以後 slash command 會更快同步到該伺服器
 - `QUIZ_TIME`：每日出題時間，例如 `08:00`
-- `OLLAMA_MODEL`：建議先用 `qwen3:4b`，電腦較弱可用 `qwen3:1.7b`
+- `OLLAMA_MODEL`：建議先用 `qwen2.5:3b`；它比較適合翻譯和短回覆
+- `OLLAMA_TIMEOUT`：等待本機模型回覆的秒數，預設 `120`
 - `MESSAGE_CONTENT_INTENT`：預設 `false`；若要讓 bot 理解一般聊天訊息，需到 Discord Developer Portal 開啟 Message Content Intent 後改成 `true`
 - `DICTIONARY_ENABLED`：預設 `true`；使用 Jisho 字典 API 查讀音與基本釋義
 

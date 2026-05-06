@@ -35,10 +35,11 @@ class ParsedAddIntent:
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, model: str, enabled: bool = True):
+    def __init__(self, base_url: str, model: str, enabled: bool = True, timeout: int = 120):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.enabled = enabled
+        self.timeout = timeout
 
     def parse_add_intent(self, text: str) -> ParsedAddIntent | None:
         heuristic = heuristic_parse_add_intent(text)
@@ -123,7 +124,8 @@ class OllamaClient:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.1},
+                "think": False,
+                "options": {"temperature": 0.1, "num_predict": 320},
             }
         ).encode("utf-8")
         req = urllib.request.Request(
@@ -132,7 +134,7 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
         return str(body.get("response", ""))
 
