@@ -27,7 +27,7 @@ def _load_dotenv() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    load_dotenv()
+    load_dotenv(encoding="utf-8-sig")
 
 
 def _optional_int(value: str | None) -> int | None:
