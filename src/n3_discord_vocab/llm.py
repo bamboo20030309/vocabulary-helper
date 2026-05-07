@@ -147,6 +147,7 @@ class OllamaClient:
         prompt = (
             "請為下面日文單字產生一個 N3 程度的短句範例，並附繁體中文翻譯。"
             "格式固定為：例句：日本語。\\n中文：繁中翻譯。"
+            "日文例句必須原封不動包含指定單字，不可改成近義詞、活用形或其他表現。"
             "句子要自然、短，不要解釋。\n"
             f"單字：{surface}\n讀音：{reading}\n意思：{meaning_zh}"
         )
@@ -154,7 +155,31 @@ class OllamaClient:
             generated = self._generate(prompt).strip()
         except (urllib.error.URLError, TimeoutError, OSError):
             return "例句暫時無法產生，請確認 Ollama 是否正在執行。"
-        return generated or "例句暫時無法產生，請確認 Ollama 是否正在執行。"
+        if valid_example_sentence(generated, surface):
+            return generated
+        retried = self._retry_example_sentence(surface, reading, meaning_zh, generated)
+        if valid_example_sentence(retried, surface):
+            return retried
+        return fallback_example_sentence(surface)
+
+    def _retry_example_sentence(
+        self,
+        surface: str,
+        reading: str,
+        meaning_zh: str,
+        bad_example: str,
+    ) -> str:
+        prompt = (
+            "上一個例句沒有包含指定單字，請重寫。"
+            "日文例句必須逐字包含指定單字。"
+            "格式固定為：例句：日本語。\\n中文：繁中翻譯。"
+            "不要解釋，不要使用近義詞。\n"
+            f"指定單字：{surface}\n讀音：{reading}\n意思：{meaning_zh}\n錯誤例句：{bad_example}"
+        )
+        try:
+            return self._generate(prompt).strip()
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return ""
 
     def _generate(self, prompt: str) -> str:
         payload = json.dumps(
@@ -252,3 +277,16 @@ def translate_common_english_definition(text: str) -> str:
         if phrase in lowered and zh not in results:
             results.append(zh)
     return "、".join(results[:6])
+
+
+def valid_example_sentence(example: str, surface: str) -> bool:
+    if not example or not surface or surface not in example:
+        return False
+    japanese_line = example.splitlines()[0]
+    japanese_line = japanese_line.replace("例句：", "").strip()
+    allowed = re.compile(r"^[\u3040-\u30ff\u3400-\u9fff々〆〤ー。、！？「」『』（）\sA-Za-z0-9]+$")
+    return bool(allowed.match(japanese_line))
+
+
+def fallback_example_sentence(surface: str) -> str:
+    return f"例句：この文では「{surface}」を使います。\n中文：這個句子使用「{surface}」。"
