@@ -49,7 +49,8 @@ python -m n3_discord_vocab.bot
 ## Discord 指令
 
 ```text
-/add word:承る label:reading_unknown reading:うけたまわる meaning:聽、承蒙、接受
+/add word:承る
+/add word:承る label:reading_unknown
 /mark word:承る label:known
 /quiz
 /stats
@@ -63,6 +64,7 @@ python -m n3_discord_vocab.bot
 !stats
 !words
 !words 10
+!add やがて
 ```
 
 也可以直接跟 bot 說：
@@ -70,6 +72,7 @@ python -m n3_discord_vocab.bot
 ```text
 把「締め切り」加入，我意思不記得
 承る 這個我看過但讀音忘了
+add やがて
 やがて 是什麼意思？
 ```
 

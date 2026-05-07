@@ -167,6 +167,17 @@ class VocabBot(commands.Bot):
             await message.reply(format_words(rows))
             return True
 
+        if command == "!add":
+            if not parts:
+                await message.reply("請在 `!add` 後面接日文單字，例如：`!add やがて`")
+                return True
+            saved, response = await self.complete_and_save_word(
+                surface=" ".join(parts),
+                label=Label.MEANING_UNKNOWN,
+            )
+            await message.reply(response)
+            return True
+
         if command == "!quiz":
             questions = self.quiz_engine.build_daily_quiz(10)
             if not questions:
@@ -184,47 +195,17 @@ class VocabBot(commands.Bot):
     async def handle_natural_message(self, message: discord.Message) -> bool:
         parsed = await asyncio.to_thread(self.llm.parse_add_intent, message.content)
         should_add = parsed and any(
-            key in message.content for key in ["加入", "新增", "記", "存", "不記得", "忘"]
+            key in message.content.lower()
+            for key in ["加入", "新增", "記", "存", "不記得", "忘", "add"]
         )
         if parsed and should_add:
-            reading = parsed.reading
-            meaning = parsed.meaning_zh
-            part_of_speech = ""
-            source = "llm"
-            if not reading or not meaning:
-                entry = await asyncio.to_thread(self.dictionary.lookup, parsed.surface)
-                if entry:
-                    reading = reading or entry.reading
-                    meaning = meaning or await asyncio.to_thread(
-                        self.llm.translate_dictionary_meaning,
-                        entry.surface,
-                        entry.reading,
-                        entry.meaning,
-                    )
-                    part_of_speech = entry.part_of_speech
-                    source = entry.source
-            if not reading or not meaning:
-                await message.reply("我抓到你想加入單字，但字典查不到完整資料。你可以補讀音或意思給我。")
-                return True
-            word = self.store.upsert_word(
+            _word, response = await self.complete_and_save_word(
                 surface=parsed.surface,
-                reading=reading,
-                meaning_zh=meaning,
                 label=parsed.label,
-                part_of_speech=part_of_speech,
-                source=source,
+                reading=parsed.reading,
+                meaning=parsed.meaning_zh,
             )
-            example = await asyncio.to_thread(
-                self.llm.example_sentence,
-                word.surface,
-                word.reading,
-                word.meaning_zh,
-            )
-            await message.reply(
-                f"已加入：{word.surface} / {word.reading}：{word.meaning_zh}\n"
-                f"標籤：{LABEL_NAMES[parsed.label.value]}\n"
-                f"{example}"
-            )
+            await message.reply(response)
             return True
 
         keyword = parsed.surface if parsed else ""
@@ -251,6 +232,63 @@ class VocabBot(commands.Bot):
             await message.reply(answer)
             return True
         return False
+
+    async def complete_and_save_word(
+        self,
+        surface: str,
+        label: Label,
+        reading: str = "",
+        meaning: str = "",
+    ) -> tuple[object | None, str]:
+        surface = surface.strip()
+        reading = reading.strip()
+        meaning = meaning.strip()
+        if not surface:
+            return None, "請給我要加入的日文單字。"
+
+        part_of_speech = ""
+        source = "manual"
+        entry = await asyncio.to_thread(self.dictionary.lookup, surface)
+        if entry:
+            surface = entry.surface or surface
+            reading = reading or entry.reading
+            if not meaning:
+                meaning = await asyncio.to_thread(
+                    self.llm.translate_dictionary_meaning,
+                    entry.surface,
+                    entry.reading,
+                    entry.meaning,
+                )
+            part_of_speech = entry.part_of_speech
+            source = entry.source
+
+        if not reading or not meaning:
+            return (
+                None,
+                "我查不到完整資料。你可以補成：`!add 單字 讀音:かな 意思:中文意思`，"
+                "或改用 `/add` 手動填讀音和意思。",
+            )
+
+        word = self.store.upsert_word(
+            surface=surface,
+            reading=reading,
+            meaning_zh=meaning,
+            label=label,
+            part_of_speech=part_of_speech,
+            source=source,
+        )
+        example = await asyncio.to_thread(
+            self.llm.example_sentence,
+            word.surface,
+            word.reading,
+            word.meaning_zh,
+        )
+        return (
+            word,
+            f"已加入：{word.surface} / {word.reading}：{word.meaning_zh}\n"
+            f"標籤：{LABEL_NAMES[label.value]}\n"
+            f"{example}",
+        )
 
     @tasks.loop(minutes=1)
     async def daily_quiz_loop(self) -> None:
@@ -309,28 +347,32 @@ def label_choices() -> list[app_commands.Choice[str]]:
 
 
 @app_commands.command(name="add", description="加入或更新一個日文單字")
-@app_commands.describe(word="日文單字", reading="讀音", meaning="中文意思", label="目前記憶狀態")
+@app_commands.describe(
+    word="日文單字；只填這個也可以，bot 會自動查讀音和意思",
+    reading="讀音，可留空",
+    meaning="中文意思，可留空",
+    label="目前記憶狀態，預設為看過但意思不記得",
+)
 @app_commands.choices(label=label_choices())
 async def add_word(
     interaction: discord.Interaction,
     word: str,
-    reading: str,
-    meaning: str,
-    label: app_commands.Choice[str],
+    reading: str = "",
+    meaning: str = "",
+    label: app_commands.Choice[str] | None = None,
 ) -> None:
     bot = interaction.client
     if not isinstance(bot, VocabBot):
         return
-    saved = bot.store.upsert_word(
-        surface=word.strip(),
-        reading=reading.strip(),
-        meaning_zh=meaning.strip(),
-        label=Label(label.value),
+    await interaction.response.defer(thinking=True)
+    target_label = Label(label.value) if label else Label.MEANING_UNKNOWN
+    _saved, response = await bot.complete_and_save_word(
+        surface=word,
+        label=target_label,
+        reading=reading,
+        meaning=meaning,
     )
-    await interaction.response.send_message(
-        f"已加入：{saved.surface} / {saved.reading}：{saved.meaning_zh}\n"
-        f"標籤：{LABEL_NAMES[label.value]}"
-    )
+    await interaction.followup.send(response)
 
 
 @app_commands.command(name="mark", description="手動調整單字標籤")
