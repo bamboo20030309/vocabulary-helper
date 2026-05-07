@@ -25,6 +25,18 @@ LABEL_HINTS = {
     "没印象": Label.NO_MEMORY,
 }
 
+COMMON_DEFINITION_TRANSLATIONS = {
+    "dare to": "敢於",
+    "daringly": "大膽地",
+    "deliberately": "故意",
+    "intentionally": "有意地",
+    "not necessarily": "不一定",
+    "not particularly": "不特別",
+    "eventually": "終於",
+    "soon": "不久",
+    "before long": "不久",
+}
+
 
 @dataclass(frozen=True)
 class ParsedAddIntent:
@@ -93,15 +105,41 @@ class OllamaClient:
         if not self.enabled:
             return f"中文翻譯暫時失敗；原始字典釋義：{meaning}"
         prompt = (
-            "把下面日文字典的英文釋義整理成精簡繁體中文。"
-            "只回傳意思本身，不要加前言。\n"
+            "你是日文到繁體中文的字典編輯。"
+            "請把英文釋義整理成台灣繁體中文詞條。"
+            "規則：只回傳中文意思本身；用頓號分隔；不要例句；不要解釋；"
+            "禁止英文、羅馬字、日文原文、半形括號。"
+            "如果英文釋義有副詞或語氣差異，請轉成自然中文，不要直譯成英文+地。"
+            "請盡量保留主要義項，但合併重複意思，最多六個短詞。\n"
             f"單字：{surface}\n讀音：{reading}\n英文釋義：{meaning}"
         )
         try:
             translated = self._generate(prompt).strip()
         except (urllib.error.URLError, TimeoutError, OSError):
             return f"中文翻譯暫時失敗；原始字典釋義：{meaning}"
-        return translated or f"中文翻譯暫時失敗；原始字典釋義：{meaning}"
+        translated = clean_meaning_response(translated)
+        if translated and not contains_latin_letters(translated):
+            return translated
+        cleaned = self._retry_clean_chinese_meaning(translated or meaning)
+        if cleaned:
+            return cleaned
+        fallback = translate_common_english_definition(meaning)
+        return fallback or f"中文翻譯暫時失敗；原始字典釋義：{meaning}"
+
+    def _retry_clean_chinese_meaning(self, text: str) -> str:
+        prompt = (
+            "把下面文字改寫成純繁體中文日文字典釋義。"
+            "只回傳中文詞義，用頓號分隔。"
+            "禁止任何英文字母、羅馬字、日文假名或解釋句。"
+            "盡量保留原本的主要義項，最多六個短詞。\n"
+            f"文字：{text}"
+        )
+        try:
+            cleaned = self._generate(prompt).strip()
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return ""
+        cleaned = clean_meaning_response(cleaned)
+        return cleaned if cleaned and not contains_latin_letters(cleaned) else ""
 
     def example_sentence(self, surface: str, reading: str, meaning_zh: str) -> str:
         if not self.enabled:
@@ -191,3 +229,26 @@ def _json_from_text(text: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def clean_meaning_response(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^(意思|中文意思|釋義|翻譯)[:：]\s*", "", text)
+    text = re.sub(r"[\r\n]+", "、", text)
+    text = re.sub(r"[;；,，]\s*", "、", text)
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"、{2,}", "、", text)
+    return text.strip(" 、。")
+
+
+def contains_latin_letters(text: str) -> bool:
+    return bool(re.search(r"[A-Za-z]", text))
+
+
+def translate_common_english_definition(text: str) -> str:
+    lowered = text.lower()
+    results = []
+    for phrase, zh in COMMON_DEFINITION_TRANSLATIONS.items():
+        if phrase in lowered and zh not in results:
+            results.append(zh)
+    return "、".join(results[:6])
