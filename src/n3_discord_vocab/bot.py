@@ -132,25 +132,31 @@ class NewWordSelectionView(discord.ui.View):
         self.user_id = user_id
         self.meaning_unknown_surfaces: set[str] = set()
         self.reading_unknown_surfaces: set[str] = set()
-        self.add_item(NewWordMeaningSelect(entries))
-        reading_entries = [entry for entry in entries if has_kanji(entry.surface)]
-        if reading_entries:
-            self.add_item(NewWordReadingSelect(reading_entries))
+        self.add_item(NewWordWeaknessSelect(entries))
         self.add_item(NewWordDoneButton())
 
 
-class NewWordMeaningSelect(discord.ui.Select):
+class NewWordWeaknessSelect(discord.ui.Select):
     def __init__(self, entries: list[DictionaryEntry]):
-        options = [
-            discord.SelectOption(
-                label=f"{entry.surface} / {entry.reading}",
-                value=entry.surface,
-                description=entry.meaning[:90],
+        options = []
+        for entry in entries:
+            options.append(
+                discord.SelectOption(
+                    label=f"不會意思：{entry.surface} / {entry.reading}",
+                    value=f"meaning|{entry.surface}",
+                    description=entry.meaning[:90],
+                )
             )
-            for entry in entries
-        ]
+            if has_kanji(entry.surface):
+                options.append(
+                    discord.SelectOption(
+                        label=f"不會讀音：{entry.surface}",
+                        value=f"reading|{entry.surface}",
+                        description=entry.meaning[:90],
+                    )
+                )
         super().__init__(
-            placeholder="勾選不會意思的新單字",
+            placeholder="勾選每個新單字的不會類型；沒勾就是會",
             min_values=0,
             max_values=len(options),
             options=options,
@@ -163,35 +169,16 @@ class NewWordMeaningSelect(discord.ui.Select):
         if view.user_id and interaction.user.id != view.user_id:
             await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
             return
-        view.meaning_unknown_surfaces = set(self.values)
-        await interaction.response.defer()
-
-
-class NewWordReadingSelect(discord.ui.Select):
-    def __init__(self, entries: list[DictionaryEntry]):
-        options = [
-            discord.SelectOption(
-                label=f"{entry.surface} / {entry.reading}",
-                value=entry.surface,
-                description=entry.meaning[:90],
-            )
-            for entry in entries
-        ]
-        super().__init__(
-            placeholder="勾選不會讀音的新單字（純假名不會出現在這裡）",
-            min_values=0,
-            max_values=len(options),
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        view = self.view
-        if not isinstance(view, NewWordSelectionView):
-            return
-        if view.user_id and interaction.user.id != view.user_id:
-            await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
-            return
-        view.reading_unknown_surfaces = set(self.values)
+        view.meaning_unknown_surfaces = {
+            value.split("|", 1)[1]
+            for value in self.values
+            if value.startswith("meaning|")
+        }
+        view.reading_unknown_surfaces = {
+            value.split("|", 1)[1]
+            for value in self.values
+            if value.startswith("reading|")
+        }
         await interaction.response.defer()
 
 
@@ -482,7 +469,7 @@ class VocabBot(commands.Bot):
         if preview_entries:
             await channel.send(
                 "開始今天題目前，先看 10 個新單字。\n"
-                "請分別勾選不會意思、或不會讀音的字；沒勾的會直接標成「會的」。"
+                "請在同一個選單裡勾選每個字的不會類型；沒勾的會直接標成「會的」。"
                 "不會意思的漢字詞也會一起排進讀音複習。",
                 view=NewWordSelectionView(self, preview_entries, self.settings.discord_user_id),
             )
@@ -503,7 +490,7 @@ class VocabBot(commands.Bot):
         if preview_entries:
             await channel.send(
                 f"{prefix}\n開始測驗前，先看 10 個新單字。\n"
-                "請分別勾選不會意思、或不會讀音的字；沒勾的會直接標成「會的」。"
+                "請在同一個選單裡勾選每個字的不會類型；沒勾的會直接標成「會的」。"
                 "不會意思的漢字詞也會一起排進讀音複習。",
                 view=NewWordSelectionView(self, preview_entries, user_id),
             )
