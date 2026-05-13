@@ -37,6 +37,14 @@ COMMON_DEFINITION_TRANSLATIONS = {
     "before long": "不久",
 }
 
+FALLBACK_EXAMPLES = {
+    "敢えて": "例句：彼は敢えて何も言わなかった。\n中文：他故意什麼都沒說。",
+    "やがて": "例句：雨はやがて止むでしょう。\n中文：雨不久會停吧。",
+    "締め切り": "例句：締め切りまであと二日しかない。\n中文：離截止日期只剩兩天了。",
+    "承る": "例句：ご注文は私が承ります。\n中文：您的訂單由我來受理。",
+    "慌てる": "例句：電車の時間を見て慌てた。\n中文：看到電車時間後慌了起來。",
+}
+
 
 @dataclass(frozen=True)
 class ParsedAddIntent:
@@ -148,7 +156,9 @@ class OllamaClient:
             "請為下面日文單字產生一個 N3 程度的短句範例，並附繁體中文翻譯。"
             "格式固定為：例句：日本語。\\n中文：繁中翻譯。"
             "日文例句必須原封不動包含指定單字，不可改成近義詞、活用形或其他表現。"
-            "句子要自然、短，不要解釋。\n"
+            "句子要像日常生活中真的會說的話，短而自然，不要教科書式定義句。"
+            "禁止使用「この文では」「使います」「意味します」這類說明文字。"
+            "不要解釋。\n"
             f"單字：{surface}\n讀音：{reading}\n意思：{meaning_zh}"
         )
         try:
@@ -173,6 +183,8 @@ class OllamaClient:
             "上一個例句沒有包含指定單字，請重寫。"
             "日文例句必須逐字包含指定單字。"
             "格式固定為：例句：日本語。\\n中文：繁中翻譯。"
+            "句子要像日常生活中真的會說的短句。"
+            "禁止使用「この文では」「使います」「意味します」這類說明文字。"
             "不要解釋，不要使用近義詞。\n"
             f"指定單字：{surface}\n讀音：{reading}\n意思：{meaning_zh}\n錯誤例句：{bad_example}"
         )
@@ -289,4 +301,6 @@ def valid_example_sentence(example: str, surface: str) -> bool:
 
 
 def fallback_example_sentence(surface: str) -> str:
-    return f"例句：この文では「{surface}」を使います。\n中文：這個句子使用「{surface}」。"
+    if surface in FALLBACK_EXAMPLES:
+        return FALLBACK_EXAMPLES[surface]
+    return f"例句：彼は「{surface}」と言って、少し笑った。\n中文：他說了「{surface}」，然後微微笑了。"
