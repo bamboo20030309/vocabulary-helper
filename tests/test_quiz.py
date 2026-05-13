@@ -53,3 +53,18 @@ def test_focused_quiz_uses_seventy_percent_focus_words(tmp_path):
 
     assert len(questions) == 10
     assert sum(question.word.id in focus_ids for question in questions) >= 7
+
+
+def test_meaning_questions_use_varied_fallback_sentences(tmp_path):
+    store = VocabularyStore(tmp_path / "vocab.sqlite3")
+    words = [
+        store.upsert_word("未知副詞", "みちふくし", "未知副詞", Label.NO_MEMORY, part_of_speech="adverb"),
+        store.upsert_word("未知動詞", "みちどうし", "未知動詞", Label.NO_MEMORY, part_of_speech="verb"),
+        store.upsert_word("未知名詞", "みちめいし", "未知名詞", Label.NO_MEMORY, part_of_speech="noun"),
+    ]
+    engine = QuizEngine(store, random.Random(1))
+
+    prompts = [engine.meaning_question(word, QuestionType.MEANING).prompt for word in words]
+
+    assert len(set(prompts)) > 1
+    assert all("この文では____が一番自然です。" not in prompt for prompt in prompts)

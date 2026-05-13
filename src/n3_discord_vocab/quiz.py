@@ -28,6 +28,62 @@ EXAMPLE_SENTENCES = {
     "悔しい": "あと一点で負けて、とても____。",
     "ずらす": "会議の時間を三十分____。",
     "わざと": "彼は____間違えたふりをした。",
+    "せめて": "忙しくても、____朝ご飯だけは食べたい。",
+    "むしろ": "安い物より、____長く使える物を選びたい。",
+    "なかなか": "この問題は____答えが出なかった。",
+    "すっかり": "雨にぬれて、服が____重くなった。",
+    "なるべく": "健康のために、____歩くようにしている。",
+    "たびたび": "彼は仕事で京都を____訪れている。",
+    "ついでに": "駅へ行く____、郵便局にも寄った。",
+    "余る": "料理を作りすぎて、ご飯が少し____。",
+    "支える": "家族の言葉が、つらい時の私を____。",
+    "断る": "都合が悪かったので、友だちの誘いを____。",
+    "眺める": "休みの日は、海を____のが好きだ。",
+    "通じる": "この道は駅まで____。",
+    "試す": "新しい勉強方法を一度____ことにした。",
+    "失う": "大切な資料を____て、とても困った。",
+    "避ける": "混雑を____ために、早めに家を出た。",
+    "比べる": "二つの案を____てから決めよう。",
+    "似合う": "その明るい色の服は君によく____。",
+    "積極的": "彼女は授業で____に質問する。",
+    "消極的": "彼は新しい計画に少し____だった。",
+    "貴重": "旅先で____な経験をした。",
+    "平等": "みんなが____に意見を言える場を作りたい。",
+    "迷惑": "夜遅くに大きな音を出すのは____だ。",
+    "苦労": "一人暮らしを始めて、お金の管理に____した。",
+    "環境": "静かな____で勉強すると集中しやすい。",
+    "状態": "スマホの電池が少ない____で出かけた。",
+    "原因": "失敗の____を落ち着いて考えた。",
+    "結果": "努力した____、試験に合格できた。",
+}
+
+
+FALLBACK_SENTENCE_PATTERNS = {
+    "adverb": [
+        "大事な時ほど、____行動したほうがいい。",
+        "彼は理由を聞いて、____納得したようだった。",
+        "時間がないので、今日は____先に進めよう。",
+    ],
+    "verb": [
+        "困った時は、一度____ことも必要だ。",
+        "先生に相談してから、次の方法を____。",
+        "この仕事を最後まで____のは簡単ではない。",
+    ],
+    "i-adjective": [
+        "その一言を聞いて、とても____気持ちになった。",
+        "思ったより____結果になって驚いた。",
+        "今日は少し____ので、早めに休みたい。",
+    ],
+    "na-adjective": [
+        "会議では____な意見も必要だ。",
+        "その説明は少し____で、すぐには分からなかった。",
+        "彼の考え方はとても____だと思う。",
+    ],
+    "noun": [
+        "まず____を確認してから始めよう。",
+        "この問題では____がとても大切だ。",
+        "話し合いの中で、____について意見が出た。",
+    ],
 }
 
 
@@ -141,7 +197,7 @@ class QuizEngine:
         ]
         distractors = [candidate.surface for candidate in candidates]
         options = self._options(word.surface, distractors)
-        sentence = EXAMPLE_SENTENCES.get(word.surface, f"この文では____が一番自然です。")
+        sentence = self.meaning_sentence(word)
         prompt = f"短句填空：{sentence}\n請選最適合填入空格的單字。"
         explanation = f"{word.surface} / {word.reading}：{word.meaning_zh}"
         option_explanations = {word.surface: word.meaning_zh}
@@ -156,6 +212,28 @@ class QuizEngine:
             explanation=explanation,
             option_explanations=option_explanations,
         )
+
+    def meaning_sentence(self, word: Word) -> str:
+        if word.surface in EXAMPLE_SENTENCES:
+            return EXAMPLE_SENTENCES[word.surface]
+        part = word.part_of_speech.lower()
+        if "adverb" in part:
+            patterns = FALLBACK_SENTENCE_PATTERNS["adverb"]
+        elif "verb" in part:
+            patterns = FALLBACK_SENTENCE_PATTERNS["verb"]
+        elif "i-adjective" in part:
+            patterns = FALLBACK_SENTENCE_PATTERNS["i-adjective"]
+        elif "na-adjective" in part or "adjective" in part:
+            patterns = FALLBACK_SENTENCE_PATTERNS["na-adjective"]
+        elif "noun" in part:
+            patterns = FALLBACK_SENTENCE_PATTERNS["noun"]
+        else:
+            patterns = [
+                sentence
+                for group in FALLBACK_SENTENCE_PATTERNS.values()
+                for sentence in group
+            ]
+        return self.rng.choice(patterns)
 
     def reading_question(self, word: Word, question_type: QuestionType) -> QuizQuestion:
         candidates = [
