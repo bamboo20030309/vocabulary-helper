@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 
 from .db import VocabularyStore
 from .models import CardType, Label, QuestionType, QuizQuestion, Word
@@ -62,6 +63,31 @@ class QuizEngine:
         self.rng.shuffle(selected)
         return selected[:count]
 
+    def build_quiz_with_focus_words(
+        self,
+        focus_words: list[Word],
+        count: int = 10,
+        focus_ratio: float = 0.7,
+    ) -> list[QuizQuestion]:
+        selected: list[QuizQuestion] = []
+        used_ids: set[int] = set()
+        focus_count = min(len(focus_words), round(count * focus_ratio))
+        for word in focus_words[:focus_count]:
+            selected.append(self.meaning_question(word, QuestionType.NEW_WORD))
+            used_ids.add(word.id)
+
+        while len(selected) < count:
+            fallback = self._questions_for_type(QuestionType.MEANING, 1, used_ids)
+            if not fallback:
+                fallback = self._questions_for_type(QuestionType.KNOWN_RECALL, 1, used_ids)
+            if not fallback:
+                break
+            selected.extend(fallback)
+            used_ids.add(fallback[0].word.id)
+
+        self.rng.shuffle(selected)
+        return selected[:count]
+
     def _questions_for_type(
         self,
         question_type: QuestionType,
@@ -81,9 +107,10 @@ class QuizEngine:
             words = self.store.due_words(
                 CardType.READING,
                 [Label.READING_UNKNOWN, Label.NO_MEMORY],
-                count,
+                count * 3,
                 used_ids,
             )
+            words = [word for word in words if has_kanji(word.surface)][:count]
             return [self.reading_question(word, question_type) for word in words]
 
         if question_type == QuestionType.KNOWN_RECALL:
@@ -159,3 +186,7 @@ class QuizEngine:
         options = [correct, *unique[:3]]
         self.rng.shuffle(options)
         return options
+
+
+def has_kanji(text: str) -> bool:
+    return bool(re.search(r"[\u3400-\u9fff々〆〤]", text))

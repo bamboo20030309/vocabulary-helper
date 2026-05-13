@@ -152,6 +152,7 @@ class NewWordDoneButton(discord.ui.Button):
 
         unknown = []
         known = []
+        saved_words = []
         for entry in view.entries:
             label = Label.NO_MEMORY if entry.surface in view.selected_surfaces else Label.KNOWN
             word = view.app.store.upsert_word(
@@ -163,6 +164,7 @@ class NewWordDoneButton(discord.ui.Button):
                 source=entry.source,
             )
             view.app.store.postpone_word(word.id, days=3)
+            saved_words.append(word)
             if label == Label.NO_MEMORY:
                 unknown.append(entry.surface)
             else:
@@ -173,7 +175,12 @@ class NewWordDoneButton(discord.ui.Button):
             f"不會：{', '.join(unknown) if unknown else '無'}"
         )
         await interaction.response.edit_message(content=summary, view=None)
-        await view.app.send_quiz(interaction.channel, view.user_id, prefix="今天 10 題開始。")
+        await view.app.send_quiz(
+            interaction.channel,
+            view.user_id,
+            prefix="今天 10 題開始。至少 7 題會從剛剛的新單字出。",
+            focus_words=saved_words,
+        )
 
 
 class VocabBot(commands.Bot):
@@ -424,10 +431,14 @@ class VocabBot(commands.Bot):
         channel: discord.abc.Messageable | None,
         user_id: int | None,
         prefix: str,
+        focus_words: list | None = None,
     ) -> None:
         if channel is None:
             return
-        questions = self.quiz_engine.build_daily_quiz(10)
+        if focus_words:
+            questions = self.quiz_engine.build_quiz_with_focus_words(focus_words, 10, 0.7)
+        else:
+            questions = self.quiz_engine.build_daily_quiz(10)
         if not questions:
             await channel.send("今天還沒有足夠單字可以出題，先用 `/add` 加幾個。")
             return
