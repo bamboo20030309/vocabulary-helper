@@ -14,7 +14,7 @@ from .db import VocabularyStore
 from .dictionary import DictionaryClient, DictionaryEntry
 from .llm import OllamaClient
 from .models import CardType, Label, QuizQuestion
-from .quiz import QuizEngine
+from .quiz import QuizEngine, has_kanji
 
 
 LABEL_NAMES = {
@@ -130,12 +130,16 @@ class NewWordSelectionView(discord.ui.View):
         self.app = app
         self.entries = entries
         self.user_id = user_id
-        self.selected_surfaces: set[str] = set()
-        self.add_item(NewWordSelect(entries))
+        self.meaning_unknown_surfaces: set[str] = set()
+        self.reading_unknown_surfaces: set[str] = set()
+        self.add_item(NewWordMeaningSelect(entries))
+        reading_entries = [entry for entry in entries if has_kanji(entry.surface)]
+        if reading_entries:
+            self.add_item(NewWordReadingSelect(reading_entries))
         self.add_item(NewWordDoneButton())
 
 
-class NewWordSelect(discord.ui.Select):
+class NewWordMeaningSelect(discord.ui.Select):
     def __init__(self, entries: list[DictionaryEntry]):
         options = [
             discord.SelectOption(
@@ -146,7 +150,7 @@ class NewWordSelect(discord.ui.Select):
             for entry in entries
         ]
         super().__init__(
-            placeholder="勾選你不會或不確定的新單字",
+            placeholder="勾選不會意思的新單字",
             min_values=0,
             max_values=len(options),
             options=options,
@@ -159,7 +163,35 @@ class NewWordSelect(discord.ui.Select):
         if view.user_id and interaction.user.id != view.user_id:
             await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
             return
-        view.selected_surfaces = set(self.values)
+        view.meaning_unknown_surfaces = set(self.values)
+        await interaction.response.defer()
+
+
+class NewWordReadingSelect(discord.ui.Select):
+    def __init__(self, entries: list[DictionaryEntry]):
+        options = [
+            discord.SelectOption(
+                label=f"{entry.surface} / {entry.reading}",
+                value=entry.surface,
+                description=entry.meaning[:90],
+            )
+            for entry in entries
+        ]
+        super().__init__(
+            placeholder="勾選不會讀音的新單字（純假名不會出現在這裡）",
+            min_values=0,
+            max_values=len(options),
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, NewWordSelectionView):
+            return
+        if view.user_id and interaction.user.id != view.user_id:
+            await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
+            return
+        view.reading_unknown_surfaces = set(self.values)
         await interaction.response.defer()
 
 
@@ -175,11 +207,19 @@ class NewWordDoneButton(discord.ui.Button):
             await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
             return
 
-        unknown = []
+        meaning_unknown = []
+        reading_unknown = []
         known = []
-        saved_words = []
+        focus_words = []
         for entry in view.entries:
-            label = Label.NO_MEMORY if entry.surface in view.selected_surfaces else Label.KNOWN
+            meaning_selected = entry.surface in view.meaning_unknown_surfaces
+            reading_selected = entry.surface in view.reading_unknown_surfaces
+            if meaning_selected:
+                label = Label.MEANING_UNKNOWN
+            elif reading_selected:
+                label = Label.READING_UNKNOWN
+            else:
+                label = Label.KNOWN
             word = view.app.store.upsert_word(
                 surface=entry.surface,
                 reading=entry.reading,
@@ -188,23 +228,30 @@ class NewWordDoneButton(discord.ui.Button):
                 part_of_speech=entry.part_of_speech,
                 source=entry.source,
             )
-            view.app.store.postpone_word(word.id, days=3)
-            saved_words.append(word)
-            if label == Label.NO_MEMORY:
-                unknown.append(entry.surface)
+            if meaning_selected:
+                focus_words.append(word)
+                meaning_unknown.append(entry.surface)
+                if has_kanji(entry.surface):
+                    view.app.store.set_label(word.id, CardType.READING, Label.READING_UNKNOWN)
+                    reading_unknown.append(entry.surface)
+            elif reading_selected:
+                reading_unknown.append(entry.surface)
             else:
+                view.app.store.postpone_word(word.id, days=3)
                 known.append(entry.surface)
 
         summary = (
-            f"新單字已記錄：{len(unknown)} 個不會，{len(known)} 個先標成會的。\n"
-            f"不會：{', '.join(unknown) if unknown else '無'}"
+            f"新單字已記錄：{len(meaning_unknown)} 個不會意思，"
+            f"{len(reading_unknown)} 個不會讀音，{len(known)} 個先標成會的。\n"
+            f"不會意思：{', '.join(meaning_unknown) if meaning_unknown else '無'}\n"
+            f"不會讀音：{', '.join(reading_unknown) if reading_unknown else '無'}"
         )
         await interaction.response.edit_message(content=summary, view=None)
         await view.app.send_quiz(
             interaction.channel,
             view.user_id,
-            prefix="今天 10 題開始。至少 7 題會從剛剛的新單字出。",
-            focus_words=saved_words,
+            prefix="今天 10 題開始。會優先從剛剛標成不會意思的新單字出填空題。",
+            focus_words=focus_words,
         )
 
 
@@ -435,7 +482,8 @@ class VocabBot(commands.Bot):
         if preview_entries:
             await channel.send(
                 "開始今天題目前，先看 10 個新單字。\n"
-                "請勾選你不會或不確定的；沒勾的會直接標成「會的」。",
+                "請分別勾選不會意思、或不會讀音的字；沒勾的會直接標成「會的」。"
+                "不會意思的漢字詞也會一起排進讀音複習。",
                 view=NewWordSelectionView(self, preview_entries, self.settings.discord_user_id),
             )
             self.last_daily_quiz_date = today
@@ -455,7 +503,8 @@ class VocabBot(commands.Bot):
         if preview_entries:
             await channel.send(
                 f"{prefix}\n開始測驗前，先看 10 個新單字。\n"
-                "請勾選你不會或不確定的；沒勾的會直接標成「會的」。",
+                "請分別勾選不會意思、或不會讀音的字；沒勾的會直接標成「會的」。"
+                "不會意思的漢字詞也會一起排進讀音複習。",
                 view=NewWordSelectionView(self, preview_entries, user_id),
             )
             return
