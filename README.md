@@ -36,7 +36,7 @@ Copy-Item .env.example .env
 - `OLLAMA_MODEL`：建議先用 `qwen2.5:3b`；翻譯與例句品質比小模型穩
 - `OLLAMA_TIMEOUT`：等待本機模型回覆的秒數，預設 `120`
 - `MESSAGE_CONTENT_INTENT`：預設 `false`；若要讓 bot 理解一般聊天訊息，需到 Discord Developer Portal 開啟 Message Content Intent 後改成 `true`
-- `DICTIONARY_ENABLED`：預設 `true`；使用 Jisho 字典 API 查讀音與基本釋義
+- `DICTIONARY_ENABLED`：預設 `true`；先查本地中文覆蓋詞典，查不到才使用 Jisho 字典 API 與 Ollama 翻譯
 
 ## 啟動
 
@@ -76,7 +76,7 @@ add やがて
 やがて 是什麼意思？
 ```
 
-查外部字典時，bot 會回傳中文意思與一個短句範例；意思題會以短句填空形式出題。
+查字典時，bot 會先用本地日中詞典覆蓋表回傳中文；查不到中文時才查 Jisho 英文釋義並交給 Ollama 翻譯。回覆會附一個短句範例；意思題會以短句填空形式出題。
 
 如果 `LLM_ENABLED=true` 且 Ollama 正在跑，bot 會嘗試解析自然語言；失敗時會提示你改用 `/add`。
 

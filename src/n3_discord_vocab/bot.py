@@ -212,12 +212,14 @@ class VocabBot(commands.Bot):
         if keyword and any(key in message.content for key in ["意思", "讀音", "读音", "怎麼念", "怎么念"]):
             entry = await asyncio.to_thread(self.dictionary.lookup, keyword)
             if entry:
-                meaning = await asyncio.to_thread(
-                    self.llm.translate_dictionary_meaning,
-                    entry.surface,
-                    entry.reading,
-                    entry.meaning,
-                )
+                meaning = entry.meaning
+                if entry.meaning_language != "zh":
+                    meaning = await asyncio.to_thread(
+                        self.llm.translate_dictionary_meaning,
+                        entry.surface,
+                        entry.reading,
+                        entry.meaning,
+                    )
                 example = await asyncio.to_thread(
                     self.llm.example_sentence,
                     entry.surface,
@@ -253,12 +255,14 @@ class VocabBot(commands.Bot):
             surface = entry.surface or surface
             reading = reading or entry.reading
             if not meaning:
-                meaning = await asyncio.to_thread(
-                    self.llm.translate_dictionary_meaning,
-                    entry.surface,
-                    entry.reading,
-                    entry.meaning,
-                )
+                meaning = entry.meaning
+                if entry.meaning_language != "zh":
+                    meaning = await asyncio.to_thread(
+                        self.llm.translate_dictionary_meaning,
+                        entry.surface,
+                        entry.reading,
+                        entry.meaning,
+                    )
             part_of_speech = entry.part_of_speech
             source = entry.source
 
