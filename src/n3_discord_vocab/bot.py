@@ -123,6 +123,7 @@ class VocabBot(commands.Bot):
         self.tree.add_command(quiz_now)
         self.tree.add_command(stats)
         self.tree.add_command(words)
+        self.tree.add_command(lookup)
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -165,6 +166,13 @@ class VocabBot(commands.Bot):
                 limit = max(1, min(50, int(parts[0])))
             rows = self.store.list_words(limit=limit)
             await message.reply(format_words(rows))
+            return True
+
+        if command in {"!lookup", "!查"}:
+            if not parts:
+                await message.reply("請在 `!lookup` 後面接日文單字，例如：`!lookup 敢えて`")
+                return True
+            await message.reply(await self.lookup_word(" ".join(parts)))
             return True
 
         if command == "!add":
@@ -210,30 +218,37 @@ class VocabBot(commands.Bot):
 
         keyword = parsed.surface if parsed else ""
         if keyword and any(key in message.content for key in ["意思", "讀音", "读音", "怎麼念", "怎么念"]):
-            entry = await asyncio.to_thread(self.dictionary.lookup, keyword)
-            if entry:
-                meaning = entry.meaning
-                if entry.meaning_language != "zh":
-                    meaning = await asyncio.to_thread(
-                        self.llm.translate_dictionary_meaning,
-                        entry.surface,
-                        entry.reading,
-                        entry.meaning,
-                    )
-                example = await asyncio.to_thread(
-                    self.llm.example_sentence,
-                    entry.surface,
-                    entry.reading,
-                    meaning,
-                )
-                await message.reply(f"{entry.surface} / {entry.reading}：{meaning}\n{example}")
-                return True
+            await message.reply(await self.lookup_word(keyword))
+            return True
 
         answer = await asyncio.to_thread(self.llm.answer, message.content)
         if answer:
             await message.reply(answer)
             return True
         return False
+
+    async def lookup_word(self, keyword: str) -> str:
+        keyword = keyword.strip()
+        if not keyword:
+            return "請給我要查的日文單字。"
+        entry = await asyncio.to_thread(self.dictionary.lookup, keyword)
+        if not entry:
+            return "查不到這個單字。"
+        meaning = entry.meaning
+        if entry.meaning_language != "zh":
+            meaning = await asyncio.to_thread(
+                self.llm.translate_dictionary_meaning,
+                entry.surface,
+                entry.reading,
+                entry.meaning,
+            )
+        example = await asyncio.to_thread(
+            self.llm.example_sentence,
+            entry.surface,
+            entry.reading,
+            meaning,
+        )
+        return f"{entry.surface} / {entry.reading}：{meaning}\n{example}"
 
     async def complete_and_save_word(
         self,
@@ -447,6 +462,16 @@ async def words(
         await interaction.response.send_message("目前沒有符合條件的單字。", ephemeral=True)
         return
     await interaction.response.send_message(format_words(rows))
+
+
+@app_commands.command(name="lookup", description="查詢日文單字，不寫入單字庫")
+@app_commands.describe(word="要查詢的日文單字")
+async def lookup(interaction: discord.Interaction, word: str) -> None:
+    bot = interaction.client
+    if not isinstance(bot, VocabBot):
+        return
+    await interaction.response.defer(thinking=True)
+    await interaction.followup.send(await bot.lookup_word(word))
 
 
 def format_words(rows: list[tuple[object, str, str]]) -> str:

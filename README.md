@@ -55,6 +55,7 @@ python -m n3_discord_vocab.bot
 /quiz
 /stats
 /words
+/lookup word:敢えて
 ```
 
 私訊裡如果 `/words` 還沒出現，可以直接用文字指令：
@@ -64,6 +65,8 @@ python -m n3_discord_vocab.bot
 !stats
 !words
 !words 10
+!lookup 敢えて
+!查 敢えて
 !add やがて
 ```
 
