@@ -3,8 +3,8 @@ from __future__ import annotations
 import random
 
 from n3_discord_vocab.db import VocabularyStore
-from n3_discord_vocab.models import Label, QuestionType
-from n3_discord_vocab.quiz import QuizEngine, has_kanji
+from n3_discord_vocab.models import CardType, Label, QuestionType
+from n3_discord_vocab.quiz import QuizEngine, display_reading, has_kanji
 
 
 def test_daily_quiz_builds_questions(tmp_path):
@@ -23,6 +23,8 @@ def test_daily_quiz_builds_questions(tmp_path):
     assert len(questions) == 10
     assert all(len(question.options) == 4 for question in questions)
     assert all(question.correct_answer in question.options for question in questions)
+    assert sum(question.card_type == CardType.MEANING for question in questions) == 8
+    assert sum(question.card_type == CardType.READING for question in questions) == 2
 
 
 def test_reading_questions_only_use_kanji_words(tmp_path):
@@ -53,6 +55,25 @@ def test_focused_quiz_uses_seventy_percent_focus_words(tmp_path):
 
     assert len(questions) == 10
     assert sum(question.word.id in focus_ids for question in questions) >= 7
+    assert sum(question.card_type == CardType.MEANING for question in questions) == 8
+    assert sum(question.card_type == CardType.READING for question in questions) == 2
+
+
+def test_meaning_question_options_use_readings(tmp_path):
+    store = VocabularyStore(tmp_path / "vocab.sqlite3")
+    word = store.upsert_word("締め切り", "しめきり", "截止、期限", Label.MEANING_UNKNOWN)
+    store.upsert_word("結果", "けっか", "結果", Label.NO_MEMORY)
+    store.upsert_word("原因", "げんいん", "原因", Label.NO_MEMORY)
+    store.upsert_word("環境", "かんきょう", "環境", Label.NO_MEMORY)
+    engine = QuizEngine(store, random.Random(1))
+
+    question = engine.meaning_question(word, QuestionType.MEANING)
+    readings = {display_reading(candidate) for candidate in store.all_words()}
+    surfaces = {candidate.surface for candidate in store.all_words()}
+
+    assert question.correct_answer == "しめきり"
+    assert set(question.options) <= readings
+    assert set(question.options).isdisjoint(surfaces)
 
 
 def test_meaning_questions_use_varied_fallback_sentences(tmp_path):

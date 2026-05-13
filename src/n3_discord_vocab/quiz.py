@@ -97,10 +97,8 @@ class QuizEngine:
         used_ids: set[int] = set()
 
         plan = [
-            (QuestionType.MEANING, 5),
+            (QuestionType.MEANING, 8),
             (QuestionType.READING, 2),
-            (QuestionType.NEW_WORD, 2),
-            (QuestionType.KNOWN_RECALL, 1),
         ]
         for question_type, planned_count in plan:
             for question in self._questions_for_type(question_type, planned_count, used_ids):
@@ -127,19 +125,22 @@ class QuizEngine:
     ) -> list[QuizQuestion]:
         selected: list[QuizQuestion] = []
         used_ids: set[int] = set()
-        focus_count = min(len(focus_words), round(count * focus_ratio))
+        meaning_count = max(0, count - 2)
+        focus_count = min(len(focus_words), round(count * focus_ratio), meaning_count)
         for word in focus_words[:focus_count]:
             selected.append(self.meaning_question(word, QuestionType.NEW_WORD))
             used_ids.add(word.id)
 
-        while len(selected) < count:
-            fallback = self._questions_for_type(QuestionType.MEANING, 1, used_ids)
-            if not fallback:
-                fallback = self._questions_for_type(QuestionType.KNOWN_RECALL, 1, used_ids)
+        while len(selected) < meaning_count:
+            fallback = self._meaning_questions(1, used_ids)
             if not fallback:
                 break
             selected.extend(fallback)
             used_ids.add(fallback[0].word.id)
+
+        for question in self._questions_for_type(QuestionType.READING, count - len(selected), used_ids):
+            selected.append(question)
+            used_ids.add(question.word.id)
 
         self.rng.shuffle(selected)
         return selected[:count]
@@ -151,13 +152,7 @@ class QuizEngine:
         used_ids: set[int],
     ) -> list[QuizQuestion]:
         if question_type == QuestionType.MEANING:
-            words = self.store.due_words(
-                CardType.MEANING,
-                [Label.MEANING_UNKNOWN, Label.NO_MEMORY],
-                count,
-                used_ids,
-            )
-            return [self.meaning_question(word, question_type) for word in words]
+            return self._meaning_questions(count, used_ids)
 
         if question_type == QuestionType.READING:
             words = self.store.due_words(
@@ -166,7 +161,15 @@ class QuizEngine:
                 count * 3,
                 used_ids,
             )
-            words = [word for word in words if has_kanji(word.surface)][:count]
+            words = [word for word in words if has_kanji(word.surface)]
+            if len(words) < count:
+                more = [
+                    word
+                    for word in self.store.random_words(count * 4, [*used_ids, *[w.id for w in words]])
+                    if has_kanji(word.surface)
+                ]
+                words.extend(more)
+            words = words[:count]
             return [self.reading_question(word, question_type) for word in words]
 
         if question_type == QuestionType.KNOWN_RECALL:
@@ -189,26 +192,47 @@ class QuizEngine:
             words.extend(more)
         return [self.meaning_question(word, question_type) for word in words]
 
+    def _meaning_questions(self, count: int, used_ids: set[int]) -> list[QuizQuestion]:
+        words = self.store.due_words(
+            CardType.MEANING,
+            [Label.MEANING_UNKNOWN, Label.NO_MEMORY],
+            count,
+            used_ids,
+        )
+        if len(words) < count:
+            more = self.store.due_words(
+                CardType.MEANING,
+                [Label.KNOWN],
+                count - len(words),
+                [*used_ids, *[word.id for word in words]],
+            )
+            words.extend(more)
+        if len(words) < count:
+            more = self.store.random_words(count - len(words), [*used_ids, *[word.id for word in words]])
+            words.extend(more)
+        return [self.meaning_question(word, QuestionType.MEANING) for word in words[:count]]
+
     def meaning_question(self, word: Word, question_type: QuestionType) -> QuizQuestion:
         candidates = [
             candidate
             for candidate in self.store.random_words(12, [word.id])
-            if candidate.surface != word.surface
+            if display_reading(candidate) != display_reading(word)
         ]
-        distractors = [candidate.surface for candidate in candidates]
-        options = self._options(word.surface, distractors)
+        correct = display_reading(word)
+        distractors = [display_reading(candidate) for candidate in candidates]
+        options = self._options(correct, distractors)
         sentence = self.meaning_sentence(word)
-        prompt = f"短句填空：{sentence}\n請選最適合填入空格的單字。"
+        prompt = f"短句填空：{sentence}\n請選最適合填入空格的單字讀音。"
         explanation = f"{word.surface} / {word.reading}：{word.meaning_zh}"
-        option_explanations = {word.surface: word.meaning_zh}
-        option_explanations.update({candidate.surface: candidate.meaning_zh for candidate in candidates})
+        option_explanations = {correct: word.meaning_zh}
+        option_explanations.update({display_reading(candidate): candidate.meaning_zh for candidate in candidates})
         return QuizQuestion(
             word=word,
             question_type=question_type,
             card_type=CardType.MEANING,
             prompt=prompt,
             options=options,
-            correct_index=options.index(word.surface),
+            correct_index=options.index(correct),
             explanation=explanation,
             option_explanations=option_explanations,
         )
@@ -239,21 +263,22 @@ class QuizEngine:
         candidates = [
             candidate
             for candidate in self.store.random_words(12, [word.id])
-            if candidate.reading != word.reading
+            if display_reading(candidate) != display_reading(word)
         ]
-        distractors = [candidate.reading for candidate in candidates]
-        options = self._options(word.reading, distractors)
+        correct = display_reading(word)
+        distractors = [display_reading(candidate) for candidate in candidates]
+        options = self._options(correct, distractors)
         prompt = f"「{word.surface}」的讀音是？"
         explanation = f"{word.surface} / {word.reading}：{word.meaning_zh}"
-        option_explanations = {word.reading: word.meaning_zh}
-        option_explanations.update({candidate.reading: candidate.meaning_zh for candidate in candidates})
+        option_explanations = {correct: word.meaning_zh}
+        option_explanations.update({display_reading(candidate): candidate.meaning_zh for candidate in candidates})
         return QuizQuestion(
             word=word,
             question_type=question_type,
             card_type=CardType.READING,
             prompt=prompt,
             options=options,
-            correct_index=options.index(word.reading),
+            correct_index=options.index(correct),
             explanation=explanation,
             option_explanations=option_explanations,
         )
@@ -263,7 +288,7 @@ class QuizEngine:
         for item in distractors:
             if item and item not in unique and item != correct:
                 unique.append(item)
-        fallback = ["不知道", "以上皆非", "容易混淆的用法"]
+        fallback = ["わからない", "どれでもない", "まぎらわしい"]
         for item in fallback:
             if len(unique) >= 3:
                 break
@@ -276,3 +301,14 @@ class QuizEngine:
 
 def has_kanji(text: str) -> bool:
     return bool(re.search(r"[\u3400-\u9fff々〆〤]", text))
+
+
+def display_reading(word: Word) -> str:
+    return katakana_to_hiragana(word.reading)
+
+
+def katakana_to_hiragana(text: str) -> str:
+    return "".join(
+        chr(ord(char) - 0x60) if "\u30a1" <= char <= "\u30f6" else char
+        for char in text
+    )

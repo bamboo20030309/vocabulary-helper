@@ -665,14 +665,16 @@ def format_answer_feedback(
     new_label: Label,
 ) -> str:
     header = f"第 {index + 1} 題"
+    question_text = f"題目：{question.prompt}"
     if correct:
-        result = f"{header}：答對了。"
+        result = f"{header}：答對了。\n{question_text}"
     else:
         selected_meaning = ""
         if question.option_explanations and selected in question.option_explanations:
             selected_meaning = f"\n你選的「{selected}」意思是：{question.option_explanations[selected]}"
         result = (
             f"{header}：答錯了。\n"
+            f"{question_text}\n"
             f"你的答案：{selected}{selected_meaning}\n"
             f"正確答案：{question.correct_answer}"
         )
