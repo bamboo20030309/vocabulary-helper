@@ -47,8 +47,8 @@ def load_settings() -> Settings:
         timezone=os.getenv("TIMEZONE", "Asia/Taipei"),
         database_path=Path(os.getenv("DATABASE_PATH", "data/vocab.sqlite3")),
         ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/"),
-        ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:3b"),
-        ollama_timeout=int(os.getenv("OLLAMA_TIMEOUT", "120")),
+        ollama_model=os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b"),
+        ollama_timeout=int(os.getenv("OLLAMA_TIMEOUT", "60")),
         llm_enabled=os.getenv("LLM_ENABLED", "true").lower() in {"1", "true", "yes", "on"},
         message_content_intent=os.getenv("MESSAGE_CONTENT_INTENT", "false").lower()
         in {"1", "true", "yes", "on"},
