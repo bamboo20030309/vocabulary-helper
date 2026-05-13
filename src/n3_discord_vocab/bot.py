@@ -30,6 +30,7 @@ class QuizSession:
     questions: list[QuizQuestion]
     index: int = 0
     correct_count: int = 0
+    history: list[str] | None = None
 
     @property
     def current(self) -> QuizQuestion:
@@ -44,6 +45,7 @@ class AnswerView(discord.ui.View):
         self.user_id = user_id
         for i, option in enumerate(session.current.options):
             self.add_item(AnswerButton(i, option))
+        self.add_item(QuitQuizButton())
 
 
 class AnswerButton(discord.ui.Button):
@@ -72,19 +74,23 @@ class AnswerButton(discord.ui.Button):
         if correct:
             view.session.correct_count += 1
 
-        result = "答對了" if correct else f"答錯了，正解是 {question.correct_answer}"
-        feedback = (
-            f"{result}\n"
-            f"{question.explanation}\n"
-            f"目前標籤：{LABEL_NAMES[new_label.value]}"
+        feedback = format_answer_feedback(
+            question=question,
+            index=view.session.index,
+            selected=selected,
+            correct=correct,
+            new_label=new_label,
         )
+        if view.session.history is None:
+            view.session.history = []
+        view.session.history.append(feedback)
         view.session.index += 1
 
         if view.session.index >= len(view.session.questions):
             total = len(view.session.questions)
             await interaction.response.edit_message(
                 content=(
-                    f"{feedback}\n\n"
+                    f"{format_quiz_history(view.session)}\n\n"
                     f"今天這組完成：{view.session.correct_count}/{total} 題。"
                 ),
                 view=None,
@@ -94,9 +100,28 @@ class AnswerButton(discord.ui.Button):
         next_question = view.session.current
         next_view = AnswerView(view.app, view.session, view.user_id)
         await interaction.response.edit_message(
-            content=f"{feedback}\n\n{format_question(next_question, view.session.index, len(view.session.questions))}",
+            content=format_quiz_message(view.session),
             view=next_view,
         )
+
+
+class QuitQuizButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="退出測驗", style=discord.ButtonStyle.danger)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, AnswerView):
+            return
+        if view.user_id and interaction.user.id != view.user_id:
+            await interaction.response.send_message("這組題目不是出給你的。", ephemeral=True)
+            return
+        total_answered = view.session.index
+        content = format_quiz_history(view.session)
+        if content:
+            content += "\n\n"
+        content += f"已退出測驗。目前答對：{view.session.correct_count}/{total_answered} 題。"
+        await interaction.response.edit_message(content=content, view=None)
 
 
 class NewWordSelectionView(discord.ui.View):
@@ -271,15 +296,7 @@ class VocabBot(commands.Bot):
             return True
 
         if command == "!quiz":
-            questions = self.quiz_engine.build_daily_quiz(10)
-            if not questions:
-                await message.reply("目前還沒有足夠單字可以出題。")
-                return True
-            session = QuizSession(questions)
-            await message.reply(
-                format_question(session.current, 0, len(questions)),
-                view=AnswerView(self, session, message.author.id),
-            )
+            await self.start_quiz_flow(message.channel, message.author.id, prefix="手動測驗開始。")
             return True
 
         return False
@@ -426,6 +443,24 @@ class VocabBot(commands.Bot):
         await self.send_quiz(channel, self.settings.discord_user_id, prefix="早安，今天 10 題。")
         self.last_daily_quiz_date = today
 
+    async def start_quiz_flow(
+        self,
+        channel: discord.abc.Messageable | None,
+        user_id: int | None,
+        prefix: str,
+    ) -> None:
+        if channel is None:
+            return
+        preview_entries = self.new_word_preview_entries(10)
+        if preview_entries:
+            await channel.send(
+                f"{prefix}\n開始測驗前，先看 10 個新單字。\n"
+                "請勾選你不會或不確定的；沒勾的會直接標成「會的」。",
+                view=NewWordSelectionView(self, preview_entries, user_id),
+            )
+            return
+        await self.send_quiz(channel, user_id, prefix=prefix)
+
     async def send_quiz(
         self,
         channel: discord.abc.Messageable | None,
@@ -444,7 +479,7 @@ class VocabBot(commands.Bot):
             return
         session = QuizSession(questions)
         await channel.send(
-            f"{prefix}\n\n" + format_question(session.current, 0, len(questions)),
+            f"{prefix}\n\n" + format_quiz_message(session),
             view=AnswerView(self, session, user_id),
         )
 
@@ -553,15 +588,9 @@ async def quiz_now(interaction: discord.Interaction) -> None:
     bot = interaction.client
     if not isinstance(bot, VocabBot):
         return
-    questions = bot.quiz_engine.build_daily_quiz(10)
-    if not questions:
-        await interaction.response.send_message("目前還沒有足夠單字可以出題。", ephemeral=True)
-        return
-    session = QuizSession(questions)
-    await interaction.response.send_message(
-        format_question(session.current, 0, len(questions)),
-        view=AnswerView(bot, session, interaction.user.id),
-    )
+    await interaction.response.defer(thinking=True)
+    await bot.start_quiz_flow(interaction.channel, interaction.user.id, prefix="手動測驗開始。")
+    await interaction.followup.send("已建立測驗流程。", ephemeral=True)
 
 
 @app_commands.command(name="stats", description="查看目前單字與答題統計")
@@ -626,6 +655,45 @@ def format_stats(data: dict[str, int]) -> str:
             f"完全沒印象：{data.get('no_memory', 0)}",
         ]
     )
+
+
+def format_answer_feedback(
+    question: QuizQuestion,
+    index: int,
+    selected: str,
+    correct: bool,
+    new_label: Label,
+) -> str:
+    header = f"第 {index + 1} 題"
+    if correct:
+        result = f"{header}：答對了。"
+    else:
+        selected_meaning = ""
+        if question.option_explanations and selected in question.option_explanations:
+            selected_meaning = f"\n你選的「{selected}」意思是：{question.option_explanations[selected]}"
+        result = (
+            f"{header}：答錯了。\n"
+            f"你的答案：{selected}{selected_meaning}\n"
+            f"正確答案：{question.correct_answer}"
+        )
+    return (
+        f"{result}\n"
+        f"{question.explanation}\n"
+        f"目前標籤：{LABEL_NAMES[new_label.value]}"
+    )
+
+
+def format_quiz_history(session: QuizSession) -> str:
+    return "\n\n".join(session.history or [])
+
+
+def format_quiz_message(session: QuizSession) -> str:
+    parts = []
+    history = format_quiz_history(session)
+    if history:
+        parts.append(history)
+    parts.append(format_question(session.current, session.index, len(session.questions)))
+    return "\n\n".join(parts)
 
 
 def format_question(question: QuizQuestion, index: int, total: int) -> str:

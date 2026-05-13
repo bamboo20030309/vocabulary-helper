@@ -55,6 +55,7 @@ class QuizQuestion:
     options: list[str]
     correct_index: int
     explanation: str
+    option_explanations: dict[str, str] | None = None
 
     @property
     def correct_answer(self) -> str:

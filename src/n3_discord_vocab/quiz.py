@@ -134,15 +134,18 @@ class QuizEngine:
         return [self.meaning_question(word, question_type) for word in words]
 
     def meaning_question(self, word: Word, question_type: QuestionType) -> QuizQuestion:
-        distractors = [
-            candidate.surface
+        candidates = [
+            candidate
             for candidate in self.store.random_words(12, [word.id])
             if candidate.surface != word.surface
         ]
+        distractors = [candidate.surface for candidate in candidates]
         options = self._options(word.surface, distractors)
         sentence = EXAMPLE_SENTENCES.get(word.surface, f"この文では____が一番自然です。")
         prompt = f"短句填空：{sentence}\n請選最適合填入空格的單字。"
         explanation = f"{word.surface} / {word.reading}：{word.meaning_zh}"
+        option_explanations = {word.surface: word.meaning_zh}
+        option_explanations.update({candidate.surface: candidate.meaning_zh for candidate in candidates})
         return QuizQuestion(
             word=word,
             question_type=question_type,
@@ -151,17 +154,21 @@ class QuizEngine:
             options=options,
             correct_index=options.index(word.surface),
             explanation=explanation,
+            option_explanations=option_explanations,
         )
 
     def reading_question(self, word: Word, question_type: QuestionType) -> QuizQuestion:
-        distractors = [
-            candidate.reading
+        candidates = [
+            candidate
             for candidate in self.store.random_words(12, [word.id])
             if candidate.reading != word.reading
         ]
+        distractors = [candidate.reading for candidate in candidates]
         options = self._options(word.reading, distractors)
         prompt = f"「{word.surface}」的讀音是？"
         explanation = f"{word.surface} / {word.reading}：{word.meaning_zh}"
+        option_explanations = {word.reading: word.meaning_zh}
+        option_explanations.update({candidate.reading: candidate.meaning_zh for candidate in candidates})
         return QuizQuestion(
             word=word,
             question_type=question_type,
@@ -170,6 +177,7 @@ class QuizEngine:
             options=options,
             correct_index=options.index(word.reading),
             explanation=explanation,
+            option_explanations=option_explanations,
         )
 
     def _options(self, correct: str, distractors: list[str]) -> list[str]:
