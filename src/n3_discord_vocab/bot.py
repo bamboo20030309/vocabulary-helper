@@ -11,7 +11,7 @@ from discord.ext import commands, tasks
 
 from .config import Settings, load_settings
 from .db import VocabularyStore
-from .dictionary import DictionaryClient
+from .dictionary import DictionaryClient, DictionaryEntry
 from .llm import OllamaClient
 from .models import CardType, Label, QuizQuestion
 from .quiz import QuizEngine
@@ -97,6 +97,83 @@ class AnswerButton(discord.ui.Button):
             content=f"{feedback}\n\n{format_question(next_question, view.session.index, len(view.session.questions))}",
             view=next_view,
         )
+
+
+class NewWordSelectionView(discord.ui.View):
+    def __init__(self, app: VocabBot, entries: list[DictionaryEntry], user_id: int | None):
+        super().__init__(timeout=3600)
+        self.app = app
+        self.entries = entries
+        self.user_id = user_id
+        self.selected_surfaces: set[str] = set()
+        self.add_item(NewWordSelect(entries))
+        self.add_item(NewWordDoneButton())
+
+
+class NewWordSelect(discord.ui.Select):
+    def __init__(self, entries: list[DictionaryEntry]):
+        options = [
+            discord.SelectOption(
+                label=f"{entry.surface} / {entry.reading}",
+                value=entry.surface,
+                description=entry.meaning[:90],
+            )
+            for entry in entries
+        ]
+        super().__init__(
+            placeholder="勾選你不會或不確定的新單字",
+            min_values=0,
+            max_values=len(options),
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, NewWordSelectionView):
+            return
+        if view.user_id and interaction.user.id != view.user_id:
+            await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
+            return
+        view.selected_surfaces = set(self.values)
+        await interaction.response.defer()
+
+
+class NewWordDoneButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="完成，開始今天題目", style=discord.ButtonStyle.primary)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        if not isinstance(view, NewWordSelectionView):
+            return
+        if view.user_id and interaction.user.id != view.user_id:
+            await interaction.response.send_message("這組新單字不是出給你的。", ephemeral=True)
+            return
+
+        unknown = []
+        known = []
+        for entry in view.entries:
+            label = Label.NO_MEMORY if entry.surface in view.selected_surfaces else Label.KNOWN
+            word = view.app.store.upsert_word(
+                surface=entry.surface,
+                reading=entry.reading,
+                meaning_zh=entry.meaning,
+                label=label,
+                part_of_speech=entry.part_of_speech,
+                source=entry.source,
+            )
+            view.app.store.postpone_word(word.id, days=3)
+            if label == Label.NO_MEMORY:
+                unknown.append(entry.surface)
+            else:
+                known.append(entry.surface)
+
+        summary = (
+            f"新單字已記錄：{len(unknown)} 個不會，{len(known)} 個先標成會的。\n"
+            f"不會：{', '.join(unknown) if unknown else '無'}"
+        )
+        await interaction.response.edit_message(content=summary, view=None)
+        await view.app.send_quiz(interaction.channel, view.user_id, prefix="今天 10 題開始。")
 
 
 class VocabBot(commands.Bot):
@@ -243,12 +320,17 @@ class VocabBot(commands.Bot):
                 entry.meaning,
             )
         example = await asyncio.to_thread(
-            self.llm.example_sentence,
-            entry.surface,
-            entry.reading,
+            self.example_for_entry,
+            entry,
             meaning,
         )
         return f"{entry.surface} / {entry.reading}：{meaning}\n{example}"
+
+    def example_for_entry(self, entry: DictionaryEntry, meaning: str) -> str:
+        if entry.examples:
+            japanese, chinese = entry.examples[0]
+            return f"例句：{japanese}\n中文：{chinese}"
+        return self.llm.example_sentence(entry.surface, entry.reading, meaning)
 
     async def complete_and_save_word(
         self,
@@ -297,6 +379,10 @@ class VocabBot(commands.Bot):
             source=source,
         )
         example = await asyncio.to_thread(
+            self.example_for_entry,
+            entry,
+            word.meaning_zh,
+        ) if entry else await asyncio.to_thread(
             self.llm.example_sentence,
             word.surface,
             word.reading,
@@ -321,17 +407,47 @@ class VocabBot(commands.Bot):
         channel = await self.daily_target_channel()
         if channel is None:
             return
+        preview_entries = self.new_word_preview_entries(10)
+        if preview_entries:
+            await channel.send(
+                "開始今天題目前，先看 10 個新單字。\n"
+                "請勾選你不會或不確定的；沒勾的會直接標成「會的」。",
+                view=NewWordSelectionView(self, preview_entries, self.settings.discord_user_id),
+            )
+            self.last_daily_quiz_date = today
+            return
+        await self.send_quiz(channel, self.settings.discord_user_id, prefix="早安，今天 10 題。")
+        self.last_daily_quiz_date = today
+
+    async def send_quiz(
+        self,
+        channel: discord.abc.Messageable | None,
+        user_id: int | None,
+        prefix: str,
+    ) -> None:
+        if channel is None:
+            return
         questions = self.quiz_engine.build_daily_quiz(10)
         if not questions:
             await channel.send("今天還沒有足夠單字可以出題，先用 `/add` 加幾個。")
-            self.last_daily_quiz_date = today
             return
         session = QuizSession(questions)
         await channel.send(
-            "早安，今天 10 題。\n\n" + format_question(session.current, 0, len(questions)),
-            view=AnswerView(self, session, self.settings.discord_user_id),
+            f"{prefix}\n\n" + format_question(session.current, 0, len(questions)),
+            view=AnswerView(self, session, user_id),
         )
-        self.last_daily_quiz_date = today
+
+    def new_word_preview_entries(self, limit: int) -> list[DictionaryEntry]:
+        known_surfaces = {word.surface for word in self.store.all_words()}
+        known_readings = {word.reading for word in self.store.all_words()}
+        entries = []
+        for entry in self.dictionary.new_word_candidates():
+            if entry.surface in known_surfaces or entry.reading in known_readings:
+                continue
+            entries.append(entry)
+            if len(entries) >= limit:
+                break
+        return entries
 
     @daily_quiz_loop.before_loop
     async def before_daily_quiz_loop(self) -> None:

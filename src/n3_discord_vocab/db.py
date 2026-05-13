@@ -197,6 +197,11 @@ class VocabularyStore:
         with self.connect() as own_conn:
             own_conn.execute(sql, args)
 
+    def postpone_word(self, word_id: int, days: int = 3) -> None:
+        due = iso(utcnow() + timedelta(days=days))
+        with self.connect() as conn:
+            conn.execute("UPDATE cards SET due_at = ? WHERE word_id = ?", (due, word_id))
+
     def due_words(
         self,
         card_type: CardType,
@@ -208,7 +213,9 @@ class VocabularyStore:
         excluded = list(exclude_ids)
         placeholders = ",".join("?" for _ in label_values)
         exclude_sql = ""
-        args: list[object] = [card_type.value, *label_values, iso(utcnow())]
+        now = utcnow()
+        cooldown_cutoff = iso(now - timedelta(days=3))
+        args: list[object] = [card_type.value, *label_values, iso(now), cooldown_cutoff]
         if excluded:
             exclude_sql = "AND w.id NOT IN (" + ",".join("?" for _ in excluded) + ")"
             args.extend(excluded)
@@ -222,6 +229,12 @@ class VocabularyStore:
                 WHERE c.card_type = ?
                   AND c.label IN ({placeholders})
                   AND c.due_at <= ?
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM reviews r
+                    WHERE r.word_id = w.id
+                      AND r.created_at >= ?
+                  )
                   {exclude_sql}
                 ORDER BY
                   CASE c.label
@@ -242,9 +255,25 @@ class VocabularyStore:
         excluded = list(exclude_ids)
         exclude_sql = ""
         args: list[object] = []
+        cooldown_cutoff = iso(utcnow() - timedelta(days=3))
         if excluded:
             exclude_sql = "WHERE id NOT IN (" + ",".join("?" for _ in excluded) + ")"
             args.extend(excluded)
+        if exclude_sql:
+            exclude_sql += """
+              AND NOT EXISTS (
+                SELECT 1 FROM reviews r
+                WHERE r.word_id = words.id AND r.created_at >= ?
+              )
+            """
+        else:
+            exclude_sql = """
+              WHERE NOT EXISTS (
+                SELECT 1 FROM reviews r
+                WHERE r.word_id = words.id AND r.created_at >= ?
+              )
+            """
+        args.append(cooldown_cutoff)
         args.append(limit)
         with self.connect() as conn:
             rows = conn.execute(
@@ -380,18 +409,19 @@ def next_label(old: Label, card_type: CardType, correct: bool, consecutive_corre
             return Label.READING_UNKNOWN
         return Label.MEANING_UNKNOWN
 
-    if consecutive_correct >= 3:
+    threshold = 2 if old == Label.NO_MEMORY else 3
+    if consecutive_correct >= threshold:
         return Label.KNOWN
     return old
 
 
 def next_interval_days(label: Label, correct: bool, current_interval: int, ease: float) -> int:
     if not correct:
-        return 0
+        return 3
     if label == Label.NO_MEMORY:
-        return 0
+        return 3
     if label in {Label.MEANING_UNKNOWN, Label.READING_UNKNOWN}:
-        return 1
+        return 3
     if current_interval <= 0:
         return 3
     return max(3, round(current_interval * ease))

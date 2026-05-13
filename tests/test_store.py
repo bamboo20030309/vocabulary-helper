@@ -82,3 +82,34 @@ def test_wrong_meaning_sets_meaning_unknown(tmp_path):
     )
 
     assert label == Label.MEANING_UNKNOWN
+
+
+def test_new_word_promotes_after_two_correct_answers(tmp_path):
+    store = VocabularyStore(tmp_path / "vocab.sqlite3")
+    word = store.upsert_word(
+        surface="むしろ",
+        reading="むしろ",
+        meaning_zh="倒不如、反而",
+        label=Label.NO_MEMORY,
+    )
+
+    first = store.record_review(word.id, CardType.MEANING, "meaning", "むしろ", True)
+    second = store.record_review(word.id, CardType.MEANING, "meaning", "むしろ", True)
+
+    assert first == Label.NO_MEMORY
+    assert second == Label.KNOWN
+
+
+def test_reviewed_word_is_cooled_down_for_three_days(tmp_path):
+    store = VocabularyStore(tmp_path / "vocab.sqlite3")
+    word = store.upsert_word(
+        surface="せめて",
+        reading="せめて",
+        meaning_zh="至少、起碼",
+        label=Label.MEANING_UNKNOWN,
+    )
+
+    store.record_review(word.id, CardType.MEANING, "meaning", "せめて", False)
+
+    due = store.due_words(CardType.MEANING, [Label.MEANING_UNKNOWN], 10)
+    assert due == []
